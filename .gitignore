@@ -1,0 +1,35 @@
+# Python caches and local tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Credentials and personal configuration (all runtime files live outside Git)
+.env
+.env.*
+settings.json
+settings.*.json
+config.toml
+config.toml.*
+codex-original-notify.json
+runtime.json
+.codex/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Conversation data, logs, backups and distributable archives
+session_index.jsonl
+sessions/
+*.sqlite*
+*.db
+*.log
+*.bak
+*.backup*
+*.zip
