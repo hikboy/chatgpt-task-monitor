@@ -10,6 +10,7 @@ import argparse
 from contextlib import closing
 from datetime import datetime
 import getpass
+import html
 import json
 import os
 from pathlib import Path
@@ -24,7 +25,7 @@ import tomllib
 import urllib.error
 import urllib.request
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 IS_WINDOWS = sys.platform == "win32"
 INSTALL_SUBDIR = Path("notifications") / "codex-telegram"
 SOURCE = Path(__file__).resolve()
@@ -93,6 +94,85 @@ def excerpt(value: object, length: int, fallback: str = "") -> str:
     return text if len(text) <= length else text[:length - 1].rstrip() + "…"
 
 
+def plain_markdown(text: str) -> str:
+    """Clean common Markdown decorations without interpreting raw HTML."""
+    text = re.sub(r"!?\[([^\]\n]*)\]\([^\n]*?\)", r"\1", text)
+    text = re.sub(r"`+([^`\n]+)`+", r"\1", text)
+    for marker in (r"\*\*", "__", "~~"):
+        text = re.sub(marker + r"(.+?)" + marker, r"\1", text, flags=re.DOTALL)
+    text = re.sub(r"(?<!\w)\*([^*\n]+)\*(?!\w)", r"\1", text)
+    text = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", r"\1", text)
+    text = re.sub(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+", "", text)
+    text = re.sub(r"(?m)^[ \t]*>[ \t]?", "", text)
+    text = re.sub(r"(?m)^[ \t]*[-+*][ \t]+", "• ", text)
+    lines = [re.sub(r"[^\S\n]+", " ", line).strip() for line in text.splitlines()]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def readable_excerpt(text: str, length: int) -> str:
+    """Truncate plain text before HTML escaping, preferring complete sentences."""
+    if len(text) <= length:
+        return text
+    shortened = text[:length - 1].rstrip()
+    endings = list(re.finditer(r"[。！？]|[.!?](?=\s|$)", shortened))
+    if endings and endings[-1].end() >= length // 2:
+        shortened = shortened[:endings[-1].end()]
+    return shortened + "…"
+
+
+def table_separator(line: str) -> bool:
+    cells = line.strip().strip("|").split("|")
+    return len(cells) >= 2 and all(re.fullmatch(r"\s*:?-{3,}:?\s*", cell) for cell in cells)
+
+
+def result_preview(value: object) -> tuple[str, list[str]]:
+    """Keep the opening prose, with notices for omitted tables and fenced code."""
+    if not isinstance(value, str) or not value.strip():
+        return "未提供结果内容", []
+    lines = value.replace("\r\n", "\n").replace("\r", "\n").splitlines()
+    prose = []
+    has_table = has_code = False
+    fence = ""
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if fence:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence):
+                fence = ""
+            index += 1
+            continue
+        if marker:
+            has_code = True
+            fence = marker[1]
+            prose.append("")
+            index += 1
+            continue
+        if "|" in line and index + 1 < len(lines) and table_separator(lines[index + 1]):
+            has_table = True
+            prose.append("")
+            index += 2
+            while index < len(lines) and "|" in lines[index] and lines[index].strip():
+                index += 1
+            continue
+        if re.fullmatch(r"\s*(?:\*\s*){3,}|\s*(?:-\s*){3,}|\s*(?:_\s*){3,}", line):
+            prose.append("")
+        else:
+            prose.append(line)
+        index += 1
+    cleaned = plain_markdown("\n".join(prose))
+    paragraphs = re.split(r"\n\s*\n", cleaned) if cleaned else []
+    summary = readable_excerpt("\n\n".join(paragraphs[:2]), 300) if paragraphs else "回复内容见会话。"
+    notes = []
+    if has_table:
+        notes.append("📋 回复包含对比表，详情见会话。")
+    if has_code:
+        notes.append("🧩 回复包含代码，详情见会话。")
+    if len(paragraphs) > 2 and not notes:
+        notes.append("更多内容见会话。")
+    return summary, notes
+
+
 def resolve_session_name(event: dict, home: Path) -> str:
     provided = excerpt(event.get("thread-name"), 2000)
     if provided:
@@ -146,11 +226,21 @@ def build_message(event: dict, home: Path) -> tuple[str, dict]:
         inputs = [inputs]
     if not isinstance(inputs, list):
         inputs = []
-    task = excerpt("；".join(item for item in inputs if isinstance(item, str) and item.strip()), 150, "未提供任务内容")
-    result = excerpt(event.get("last-assistant-message"), 300, "未提供结果内容")
+    tasks = [" ".join(plain_markdown(item).split()) for item in inputs if isinstance(item, str) and item.strip()]
+    task = readable_excerpt("；".join(item for item in tasks if item), 150) or "未提供任务内容"
+    result, notes = result_preview(event.get("last-assistant-message"))
     hostname = excerpt(socket.gethostname(), 80, "未知电脑")
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
-    message = f"✅ 本轮任务完成\nSession：{excerpt(name, 200)}\n任务：{task}\n结果：{result}\n电脑：{hostname}\n时间：{timestamp}"
+    escape = html.escape
+    message = (
+        "✅ <b>本轮任务完成</b>\n\n"
+        f"<b>会话：</b> {escape(excerpt(name, 200))}\n\n"
+        f"<b>任务</b>\n{escape(task)}\n\n"
+        f"<b>结果</b>\n{escape(result)}"
+    )
+    if notes:
+        message += "\n\n" + "\n".join(f"<i>{escape(note)}</i>" for note in notes)
+    message += f"\n\n💻 {escape(hostname)}\n🕒 {escape(timestamp)}"
     return message, {"session_name": name, "task_summary": task, "result_summary": result}
 
 
@@ -199,7 +289,7 @@ def validate_credentials(token: str, chat_id: str) -> None:
 def send_telegram(home: Path, message: str) -> None:
     token, chat_id = credential_values(home)
     validate_credentials(token, chat_id)
-    body = json.dumps({"chat_id": chat_id, "text": message}, ensure_ascii=False).encode("utf-8")
+    body = json.dumps({"chat_id": chat_id, "text": message, "parse_mode": "HTML"}, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body,
                                      headers={"Content-Type": "application/json; charset=utf-8"}, method="POST")
     try:

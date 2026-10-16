@@ -10,6 +10,7 @@ import tomllib
 import unittest
 from unittest import mock
 import urllib.error
+from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import codex_telegram as notifier
@@ -91,8 +92,8 @@ class NotificationTests(unittest.TestCase):
     def test_summaries_unicode_whitespace_and_message_size(self):
         result = notifier.notify(self.event(**{"input-messages": [" 第一条\n任务 ", "", "追加要求 😀"],
                                                "last-assistant-message": "结果\n\t成功"}), self.home, dry_run=True)
-        self.assertEqual(result["task_summary"], "第一条 任务 ；追加要求 😀")
-        self.assertEqual(result["result_summary"], "结果 成功")
+        self.assertEqual(result["task_summary"], "第一条 任务；追加要求 😀")
+        self.assertEqual(result["result_summary"], "结果\n成功")
         long = notifier.notify(self.event(**{"input-messages": ["😀" * 1000],
                                              "last-assistant-message": "结果" * 1000}), self.home, dry_run=True)
         self.assertEqual(len(long["task_summary"]), 150)
@@ -101,10 +102,67 @@ class NotificationTests(unittest.TestCase):
         self.assertLessEqual(len(long["message"].encode("utf-16-le")) // 2, 4096)
         long["message"].encode("utf-8", errors="strict")
 
-    def test_single_string_input_and_plain_text_markup(self):
-        result = notifier.notify(self.event(**{"input-messages": "a < b & [x]", "last-assistant-message": "```code```"}), self.home, dry_run=True)
+    def test_single_string_input_and_html_escaping(self):
+        result = notifier.notify(self.event(**{"thread-name": '<b>Session & "name"</b>',
+                                               "input-messages": "a < b & [x]", "last-assistant-message": "`snake_case` < limit & **成功**"}), self.home, dry_run=True)
         self.assertEqual(result["task_summary"], "a < b & [x]")
-        self.assertIn("```code```", result["message"])
+        self.assertEqual(result["result_summary"], "snake_case < limit & 成功")
+        self.assertIn("<b>任务</b>\na &lt; b &amp; [x]", result["message"])
+        self.assertIn("&lt;b&gt;Session &amp; &quot;name&quot;&lt;/b&gt;", result["message"])
+        tree = ElementTree.fromstring("<root>" + result["message"] + "</root>")
+        self.assertTrue(all(element.tag in {"root", "b", "i"} for element in tree.iter()))
+        self.assertIn('<b>Session & "name"</b>', "".join(tree.itertext()))
+
+    def test_conclusion_paragraphs_and_markdown_table_notice(self):
+        reply = ("**视频人物分割推荐 SAM 3，优势是主体选择和连续跟踪。**\n\n"
+                 "精细边缘仍需配合 Alpha 抠像精修。\n\n"
+                 "| 对比项 | 当前方案 | SAM 3 |\n|---|---|---|\n"
+                 "| 连续性 | 每帧独立推理 | 视频跟踪 |\n\n其他详细说明。")
+        result = notifier.notify(self.event(**{"last-assistant-message": reply}), self.home, dry_run=True)
+        self.assertEqual(result["result_summary"], "视频人物分割推荐 SAM 3，优势是主体选择和连续跟踪。\n\n精细边缘仍需配合 Alpha 抠像精修。")
+        self.assertIn("回复包含对比表，详情见会话。", result["message"])
+        for clutter in ("**", "|---", "每帧独立推理", "其他详细说明"):
+            self.assertNotIn(clutter, result["message"])
+
+    def test_table_without_outer_pipes_and_ordinary_pipe_text(self):
+        reply = "使用 A | B 作为示例。\n\n指标 | 结果\n:--- | ---:\n成功率 | 高\n\n说明结束。"
+        result = notifier.notify(self.event(**{"last-assistant-message": reply}), self.home, dry_run=True)
+        self.assertEqual(result["result_summary"], "使用 A | B 作为示例。\n\n说明结束。")
+        self.assertIn("回复包含对比表", result["message"])
+        self.assertNotIn("成功率", result["message"])
+
+    def test_fenced_code_is_omitted_and_prose_after_it_is_preserved(self):
+        reply = "操作完成。\n\n~~~~python\nprint('<unsafe>')\n```\n~~~~\n\n- 验证通过\n- 可继续使用"
+        result = notifier.notify(self.event(**{"last-assistant-message": reply}), self.home, dry_run=True)
+        self.assertEqual(result["result_summary"], "操作完成。\n\n• 验证通过\n• 可继续使用")
+        self.assertIn("回复包含代码，详情见会话。", result["message"])
+        self.assertNotIn("print", result["message"])
+
+    def test_only_table_or_unclosed_code_has_a_useful_notice(self):
+        for reply, notice in [("| A | B |\n|---|---|\n| x | y |", "对比表"),
+                              ("```python\nprint('hello')", "代码")]:
+            with self.subTest(notice=notice):
+                result = notifier.notify(self.event(**{"last-assistant-message": reply}), self.home, dry_run=True)
+                self.assertEqual(result["result_summary"], "回复内容见会话。")
+                self.assertIn("回复包含" + notice, result["message"])
+
+    def test_two_paragraph_limit_and_sentence_boundary_truncation(self):
+        result = notifier.notify(self.event(**{"last-assistant-message": "第一段。\n\n第二段。\n\n第三段。"}), self.home, dry_run=True)
+        self.assertEqual(result["result_summary"], "第一段。\n\n第二段。")
+        self.assertIn("更多内容见会话。", result["message"])
+        reply = "结论" * 100 + "。" + "详细内容" * 100
+        result = notifier.notify(self.event(**{"last-assistant-message": reply}), self.home, dry_run=True)
+        self.assertEqual(result["result_summary"], "结论" * 100 + "。…")
+
+    def test_html_entities_and_unicode_are_safe_after_truncation(self):
+        result = notifier.notify(self.event(**{"thread-name": "😀<&>" * 1000,
+                                               "input-messages": ["😀<&>" * 1000],
+                                               "last-assistant-message": "**" + "😀<&>" * 1000 + "**"}), self.home, dry_run=True)
+        tree = ElementTree.fromstring("<root>" + result["message"] + "</root>")
+        visible = "".join(tree.itertext())
+        self.assertLessEqual(len(visible.encode("utf-16-le")) // 2, 4096)
+        self.assertNotIn("**", visible)
+        self.assertNotIn("<br", result["message"])
 
     def test_dry_run_never_sends_or_forwards(self):
         with mock.patch.object(notifier, "send_telegram") as send, mock.patch.object(notifier, "forward_original") as forward:
@@ -131,8 +189,8 @@ class NotificationTests(unittest.TestCase):
         request = opener.call_args.args[0]
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual(body["chat_id"], CHAT)
-        self.assertIn("任务：测试任务", body["text"])
-        self.assertNotIn("parse_mode", body)
+        self.assertIn("<b>任务</b>\n测试任务", body["text"])
+        self.assertEqual(body["parse_mode"], "HTML")
         self.assertEqual(opener.call_args.kwargs["timeout"], 15)
 
     def test_http_failure_does_not_log_secret_or_url(self):

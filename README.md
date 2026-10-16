@@ -4,18 +4,28 @@ macOS、Linux、Windows 共用的通知脚本。Codex 一轮任务完成时，�
 
 需要 **Python 3.11 或更新版本**，只使用标准库，无需 `pip install`。
 
-通知内容示例：
+通知使用 Telegram HTML 模式发送：标题加粗，各部分用空行分隔。显示内容示例：
 
 ```text
 ✅ 本轮任务完成
-Session：监控PowerShell窗口
-任务：通知中增加任务摘要和结果摘要
-结果：已修改脚本，测试通过。
-电脑：my-computer
-时间：2026-10-16 13:00:00 +0800
+
+会话：通知排版
+
+任务
+通知中增加任务摘要和结果摘要
+
+结果
+已修改脚本，测试通过。
+
+📋 回复包含对比表，详情见会话。
+
+💻 my-computer
+🕒 2026-10-16 13:00:00 +0800
 ```
 
-任务摘要最多 150 字，结果摘要最多 300 字，会话名称最多显示 200 字。摘要为已有文本的摘录，合并换行、超长加省略号，不额外调用模型。通知包含任务和回复的这部分内容。
+任务摘要最多 150 字，会话名称最多显示 200 字；结果保留开头最多两段正文、最多 300 字，保留段落和列表换行，超长时优先在完整句子处截断。摘要为已有文本的摘录，不额外调用模型。通知包含任务和回复的这部分内容。
+
+正文中的 Markdown 加粗、标题、行内代码及链接标记会清理为可读文字；对比表和围栏代码块改为“详情见会话”的提示，不直接拼进摘要。标题由脚本生成 HTML，正文统一转义 `<`、`>`、`&` 等特殊字符，避免原始文本被当成标签。只更新脚本即可生效，无需重新填写 Telegram 凭据。
 
 ## 安装
 
@@ -143,12 +153,14 @@ git commit -m "Describe the change"
 python3 -m unittest discover -s tests -v
 ```
 
-测试覆盖会话改名和数据库兼容、摘要截断、UTF-8、Telegram 请求、原回调转发、TOML 保留与备份、重复安装、Windows 隐藏窗口和原生命令行/标准输入。所有测试使用模拟 Telegram 响应，不发送真实消息。
+测试覆盖 HTML 标签及特殊字符转义、段落保留、表格与代码块过滤、摘要截断、会话改名和数据库兼容、UTF-8、Telegram 请求、原回调转发、TOML 保留与备份、重复安装、Windows 隐藏窗口和原生命令行/标准输入。所有测试使用模拟 Telegram 响应，不发送真实消息。
 
-本次实际验证：Windows / Python 3.12.3 与 Linux（WSL）/ Python 3.14.4 各 30 项测试通过；Windows 已另行完成真实 Telegram 发送和旧 PowerShell 入口验证。Linux 尚未验证联网发送，macOS 尚未实机验证。
+本次实际验证：Windows / Python 3.12.3 与 Linux（WSL）/ Python 3.14.4 各 36 项测试通过；Windows 已另行完成真实 HTML 通知发送，旧 PowerShell 入口此前也已验证。Linux 尚未验证联网发送，macOS 尚未实机验证。
 
 附带 GitHub Actions 的 Windows / macOS / Linux 与 Python 3.11 / 3.13 测试矩阵；把本目录作为仓库根目录后可运行。附带配置不代表已在远端执行。
 
 原生 `notify` 当前处理 `agent-turn-complete`，不覆盖崩溃、卡死和所有审批等待，也不是普通 ChatGPT 网页聊天的通用监听器。
 
 官方依据：[Codex 高级配置的 Notifications](https://developers.openai.com/codex/config-advanced/#notifications)。
+
+排版依据：[Telegram Bot API 的 HTML 模式](https://core.telegram.org/bots/api#html-style)。
