@@ -25,12 +25,18 @@ import tomllib
 import urllib.error
 import urllib.request
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 IS_WINDOWS = sys.platform == "win32"
 INSTALL_SUBDIR = Path("notifications") / "codex-telegram"
 SOURCE = Path(__file__).resolve()
 TOKEN_PATTERN = re.compile(r"\d+:[A-Za-z0-9_-]{20,}\Z")
 CHAT_PATTERN = re.compile(r"(?:-?\d+|@[A-Za-z0-9_]{5,})\Z")
+HANDOFF_HEADER = (
+    "Another language model started to solve this problem and produced a summary of its thinking process. "
+    "You also have access to the state of the tools that were used by that language model. "
+    "Use this to build on the work that has already been done and avoid duplicating work. "
+    "Here is the summary produced by the other language model"
+)
 SAFE_CODES = {
     "invalid-event", "missing-telegram-settings", "invalid-telegram-settings",
     "invalid-settings-file", "telegram-request-failed", "telegram-rejected-message",
@@ -118,6 +124,24 @@ def readable_excerpt(text: str, length: int) -> str:
     if endings and endings[-1].end() >= length // 2:
         shortened = shortened[:endings[-1].end()]
     return shortened + "…"
+
+
+def user_request_text(value: object) -> str:
+    """Exclude recognized app context before selecting a user request."""
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    # Strip only leading, closed envelopes. Ordinary prose mentioning these
+    # tags, or a request following an environment block, must remain usable.
+    while match := re.match(
+        r"\A<(environment_context|send_user_message_question_reply)>.*?</\1>\s*", text, re.DOTALL
+    ):
+        text = text[match.end():].lstrip()
+    # Handoff summaries can be appended as user-role messages by the app.
+    # Match the full known header, not a generic mention of another model.
+    if " ".join(text.split()).startswith(HANDOFF_HEADER):
+        return ""
+    return " ".join(plain_markdown(text).split())
 
 
 def table_separator(line: str) -> bool:
@@ -257,14 +281,13 @@ def build_message(event: dict, home: Path) -> tuple[str, dict]:
     if not isinstance(inputs, list):
         inputs = []
     task = "未提供任务内容"
-    # Callbacks may include earlier user messages. Select the newest usable
-    # message before truncating so a long initial request cannot hide this turn.
+    # Callbacks may mix requests with app-injected context. Filter context
+    # before selecting the newest request and applying the length limit.
     for item in reversed(inputs):
-        if isinstance(item, str):
-            current_task = " ".join(plain_markdown(item).split())
-            if current_task:
-                task = readable_excerpt(current_task, 150)
-                break
+        current_task = user_request_text(item)
+        if current_task:
+            task = readable_excerpt(current_task, 150)
+            break
     result, notes = result_preview(event.get("last-assistant-message"))
     hostname = excerpt(socket.gethostname(), 80, "未知电脑")
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")

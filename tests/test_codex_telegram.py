@@ -17,6 +17,13 @@ import codex_telegram as notifier
 
 TOKEN = "123456:" + "a" * 30
 CHAT = "-123456789"
+HANDOFF = (
+    "Another language model started to solve this problem and produced a summary of its thinking process. "
+    "You also have access to the state of the tools that were used by that language model. "
+    "Use this to build on the work that has already been done and avoid duplicating work. "
+    "Here is the summary produced by the other language model, use the information in this summary "
+    "to assist with your own analysis:\n已找到几个开源通知项目。"
+)
 
 
 class NotificationTests(unittest.TestCase):
@@ -110,6 +117,48 @@ class NotificationTests(unittest.TestCase):
         self.assertIn("📝 <b>Task</b>\n当前请求 只显示本轮内容 &lt;ok&gt; &amp; 😀", result["message"])
         self.assertNotIn("首轮历史问题", result["message"])
         self.assertNotIn("上一轮的问题", result["message"])
+
+    def test_task_ignores_handoff_summary_after_current_request(self):
+        request = "现在是否存着这样的好的开源工程可以实现我现在的这个功能"
+        result = notifier.notify(self.event(**{
+            "input-messages": ["历史问题", request, HANDOFF]
+        }), self.home, dry_run=True)
+        self.assertEqual(result["task_summary"], request)
+        self.assertIn("📝 <b>Task</b>\n" + request, result["message"])
+        self.assertNotIn("Another language model", result["message"])
+
+    def test_task_skips_context_blocks_and_keeps_adjacent_request(self):
+        environment = "<environment_context>\n<cwd>/example/project</cwd>\n</environment_context>"
+        reply = '<send_user_message_question_reply>\n[{"answer":"选项三"}]\n</send_user_message_question_reply>'
+        cases = [
+            (["旧问题", "当前请求", environment, reply], "当前请求"),
+            (["旧问题", environment + "\n\n**当前请求** <ok> & 😀", reply, HANDOFF], "当前请求 <ok> & 😀"),
+            ([HANDOFF, "这是接力之后的新请求"], "这是接力之后的新请求"),
+        ]
+        for inputs, expected in cases:
+            with self.subTest(inputs=inputs):
+                result = notifier.notify(self.event(**{"input-messages": inputs}), self.home, dry_run=True)
+                self.assertEqual(result["task_summary"], expected)
+                ElementTree.fromstring("<root>" + result["message"] + "</root>")
+
+    def test_task_only_automated_context_uses_fallback(self):
+        for inputs in ([HANDOFF], HANDOFF, ["<environment_context>metadata</environment_context>", HANDOFF]):
+            with self.subTest(inputs=inputs):
+                result = notifier.notify(self.event(**{"input-messages": inputs}), self.home, dry_run=True)
+                self.assertEqual(result["task_summary"], "未提供任务内容")
+
+    def test_task_preserves_normal_requests_mentioning_context_markers(self):
+        requests = [
+            "Another language model started to solve this problem. Please review its answer.",
+            "Another language model started to solve this problem and produced a summary of its thinking process. Please explain it.",
+            "请解释 <environment_context> 标签和 send_user_message_question_reply 的作用。",
+            "请解释这段接力摘要：\n" + HANDOFF,
+        ]
+        for request in requests:
+            with self.subTest(request=request):
+                result = notifier.notify(self.event(**{"input-messages": ["旧问题", request]}), self.home, dry_run=True)
+                expected = notifier.readable_excerpt(" ".join(notifier.plain_markdown(request).split()), 150)
+                self.assertEqual(result["task_summary"], expected)
 
     def test_single_string_input_and_html_escaping(self):
         result = notifier.notify(self.event(**{"thread-name": '<b>Session & "name"</b>',
