@@ -25,7 +25,7 @@ import tomllib
 import urllib.error
 import urllib.request
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 IS_WINDOWS = sys.platform == "win32"
 INSTALL_SUBDIR = Path("notifications") / "codex-telegram"
 SOURCE = Path(__file__).resolve()
@@ -256,8 +256,15 @@ def build_message(event: dict, home: Path) -> tuple[str, dict]:
         inputs = [inputs]
     if not isinstance(inputs, list):
         inputs = []
-    tasks = [" ".join(plain_markdown(item).split()) for item in inputs if isinstance(item, str) and item.strip()]
-    task = readable_excerpt("；".join(item for item in tasks if item), 150) or "未提供任务内容"
+    task = "未提供任务内容"
+    # Callbacks may include earlier user messages. Select the newest usable
+    # message before truncating so a long initial request cannot hide this turn.
+    for item in reversed(inputs):
+        if isinstance(item, str):
+            current_task = " ".join(plain_markdown(item).split())
+            if current_task:
+                task = readable_excerpt(current_task, 150)
+                break
     result, notes = result_preview(event.get("last-assistant-message"))
     hostname = excerpt(socket.gethostname(), 80, "未知电脑")
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")

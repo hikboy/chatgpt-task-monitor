@@ -26,7 +26,7 @@ macOS、Linux、Windows 共用的通知脚本。Codex 一轮任务完成时，�
 🕒 2026-10-16 13:00:00 +0800
 ```
 
-任务摘要最多 150 字，会话名称最多显示 200 字；结果提取开头最多两段正文和原文中的前三条列表要点，总计最多 300 字，保留段落和列表换行，超长时优先在完整句子处截断。要点统一为 `•`，单条最多 60 字；原文没有列表时不生成要点。摘要为已有文本的摘录，不额外调用模型。通知包含任务和回复的这部分内容。
+任务摘要从回调 `input-messages` 中取最后一条有效用户消息，显示当前一轮请求，不拼接历史问题，最多 150 字；会话名称最多显示 200 字。结果提取开头最多两段正文和原文中的前三条列表要点，总计最多 300 字，保留段落和列表换行，超长时优先在完整句子处截断。要点统一为 `•`，单条最多 60 字；原文没有列表时不生成要点。摘要为已有文本的摘录，不额外调用模型。通知包含任务和回复的这部分内容。
 
 顶部使用 `✅ Success` 或 `❌ Failed`。原生 `agent-turn-complete` 回调默认显示 `Success`，仅表示正常收到本轮完成事件，不保证任务中的测试或业务操作全部成功。官方文档列出的回调字段没有任务成败信息；脚本支持调用方显式传入自定义字段 `"notification-status": "failed"` 显示失败，不能自动覆盖崩溃或卡死，也不根据回复中的“失败”等词猜测状态。返回 JSON 的 `success` 仍表示通知发送或预览是否成功，与该自定义状态分别记录。
 
@@ -141,7 +141,7 @@ git diff --cached
 git commit -m "Describe the change"
 ```
 
-初始提交使用通用作者身份 `Codex Notifications <notifications@example.invalid>`，仓库本地 Git 配置也使用此身份，避免自动带入全局配置中的真实姓名或邮箱。仓库尚未配置远端；需要同步时，再添加目标远端并推送。
+初始提交使用通用作者身份 `Codex Notifications <notifications@example.invalid>`。后续提交遵循当前本机 Git 身份配置；提交作者姓名和邮箱会随 Git 历史公开。仓库尚未配置远端；需要同步时，再添加目标远端并推送。
 
 ## 排错
 
@@ -161,9 +161,9 @@ git commit -m "Describe the change"
 python3 -m unittest discover -s tests -v
 ```
 
-测试覆盖 HTML 标签及特殊字符转义、段落保留、表格与代码块过滤、摘要截断、会话改名和数据库兼容、UTF-8、Telegram 请求、原回调转发、TOML 保留与备份、重复安装、Windows 隐藏窗口和原生命令行/标准输入。所有测试使用模拟 Telegram 响应，不发送真实消息。
+测试覆盖最新一轮请求选择、HTML 标签及特殊字符转义、段落保留、表格与代码块过滤、摘要截断、会话改名和数据库兼容、UTF-8、Telegram 请求、原回调转发、TOML 保留与备份、重复安装、Windows 隐藏窗口和原生命令行/标准输入。所有测试使用模拟 Telegram 响应，不发送真实消息。
 
-本次实际验证：Windows / Python 3.12.3 与 Linux（WSL）/ Python 3.14.4 各 38 项测试通过；Windows 已另行完成真实 HTML 通知发送，旧 PowerShell 入口此前也已验证。Linux 尚未验证联网发送，macOS 尚未实机验证。
+本次实际验证：Windows / Python 3.12.3 与 Linux（WSL）/ Python 3.14.4 各 39 项测试通过；Windows 已另行完成真实 HTML 通知发送，旧 PowerShell 入口此前也已验证。Linux 尚未验证联网发送，macOS 尚未实机验证。
 
 附带 GitHub Actions 的 Windows / macOS / Linux 与 Python 3.11 / 3.13 测试矩阵；把本目录作为仓库根目录后可运行。附带配置不代表已在远端执行。
 

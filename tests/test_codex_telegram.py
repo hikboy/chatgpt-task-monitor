@@ -92,7 +92,7 @@ class NotificationTests(unittest.TestCase):
     def test_summaries_unicode_whitespace_and_message_size(self):
         result = notifier.notify(self.event(**{"input-messages": [" 第一条\n任务 ", "", "追加要求 😀"],
                                                "last-assistant-message": "结果\n\t成功"}), self.home, dry_run=True)
-        self.assertEqual(result["task_summary"], "第一条 任务；追加要求 😀")
+        self.assertEqual(result["task_summary"], "追加要求 😀")
         self.assertEqual(result["result_summary"], "结果\n成功")
         long = notifier.notify(self.event(**{"input-messages": ["😀" * 1000],
                                              "last-assistant-message": "结果" * 1000}), self.home, dry_run=True)
@@ -101,6 +101,15 @@ class NotificationTests(unittest.TestCase):
         self.assertTrue(long["task_summary"].endswith("…"))
         self.assertLessEqual(len(long["message"].encode("utf-16-le")) // 2, 4096)
         long["message"].encode("utf-8", errors="strict")
+
+    def test_task_uses_latest_request_instead_of_long_history(self):
+        result = notifier.notify(self.event(**{
+            "input-messages": ["首轮历史问题" * 100, "上一轮的问题", " **当前请求**\n只显示本轮内容 <ok> & 😀 ", "", None, {}, "\n\t"]
+        }), self.home, dry_run=True)
+        self.assertEqual(result["task_summary"], "当前请求 只显示本轮内容 <ok> & 😀")
+        self.assertIn("📝 <b>Task</b>\n当前请求 只显示本轮内容 &lt;ok&gt; &amp; 😀", result["message"])
+        self.assertNotIn("首轮历史问题", result["message"])
+        self.assertNotIn("上一轮的问题", result["message"])
 
     def test_single_string_input_and_html_escaping(self):
         result = notifier.notify(self.event(**{"thread-name": '<b>Session & "name"</b>',
@@ -373,7 +382,7 @@ class NotificationTests(unittest.TestCase):
     def test_native_cli_json_argument_and_utf8_stdin(self):
         self.index([{"id": "session-1", "thread_name": "原生回调测试"}])
         common = [sys.executable, str(notifier.SOURCE), "--codex-home", str(self.home), "notify", "--dry-run", "--json"]
-        event = self.event(**{"input-messages": ['中文 "quoted" 😀']})
+        event = self.event(**{"input-messages": ["首轮历史问题" * 100, '中文 "quoted" 😀']})
         argument_run = subprocess.run([*common, event], capture_output=True, check=True)
         stdin_run = subprocess.run([*common, "--stdin"], input=event.encode("utf-8"), capture_output=True, check=True)
         for run in (argument_run, stdin_run):
