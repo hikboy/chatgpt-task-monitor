@@ -107,11 +107,38 @@ class NotificationTests(unittest.TestCase):
                                                "input-messages": "a < b & [x]", "last-assistant-message": "`snake_case` < limit & **成功**"}), self.home, dry_run=True)
         self.assertEqual(result["task_summary"], "a < b & [x]")
         self.assertEqual(result["result_summary"], "snake_case < limit & 成功")
-        self.assertIn("<b>任务</b>\na &lt; b &amp; [x]", result["message"])
+        self.assertIn("📝 <b>Task</b>\na &lt; b &amp; [x]", result["message"])
         self.assertIn("&lt;b&gt;Session &amp; &quot;name&quot;&lt;/b&gt;", result["message"])
         tree = ElementTree.fromstring("<root>" + result["message"] + "</root>")
         self.assertTrue(all(element.tag in {"root", "b", "i"} for element in tree.iter()))
         self.assertIn('<b>Session & "name"</b>', "".join(tree.itertext()))
+
+    def test_section_layout_and_explicit_failure_status(self):
+        result = notifier.notify(self.event(**{"thread-name": "排版测试"}), self.home, dry_run=True)
+        self.assertTrue(result["message"].startswith("✅ <b>Success</b>\n\n"))
+        self.assertIn("📌 <b>Session</b>\n排版测试\n\n📝 <b>Task</b>\n测试任务\n\n💡 <b>Result</b>\n测试结果", result["message"])
+        self.assertEqual(result["completion_status"], "success")
+        failed = notifier.notify(self.event(**{"notification-status": "failed"}), self.home, dry_run=True)
+        self.assertTrue(failed["message"].startswith("❌ <b>Failed</b>\n\n"))
+        self.assertEqual(failed["completion_status"], "failed")
+        self.assertTrue(failed["success"])  # Successful preview of a reported failure.
+        ambiguous = notifier.notify(self.event(**{"last-assistant-message": "解释 Failed 标签，并举例说明测试失败。"}), self.home, dry_run=True)
+        self.assertEqual(ambiguous["completion_status"], "success")
+        for invalid in ("unknown", None, False, {}):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(notifier.notify(self.event(**{"notification-status": invalid}), self.home, dry_run=True)["status"], "invalid-event")
+
+    def test_result_summary_retains_three_points_beyond_opening_paragraphs(self):
+        reply = "完成摘要。\n\n补充说明。\n\n1. 第一项\n\n2) 第二项\n继续说明\n\n- 第三项\n- 第四项"
+        result = notifier.notify(self.event(**{"last-assistant-message": reply}), self.home, dry_run=True)
+        self.assertEqual(result["result_summary"], "完成摘要。\n\n补充说明。\n\n• 第一项\n• 第二项 继续说明\n• 第三项")
+        self.assertNotIn("第四项", result["message"])
+        self.assertIn("更多内容见会话。", result["message"])
+        long = "摘要" * 200 + "\n\n" + "\n".join("- " + "😀" * 100 for _ in range(4))
+        result = notifier.notify(self.event(**{"last-assistant-message": long}), self.home, dry_run=True)
+        self.assertLessEqual(len(result["result_summary"]), 300)
+        self.assertEqual(result["result_summary"].count("• "), 3)
+        ElementTree.fromstring("<root>" + result["message"] + "</root>")
 
     def test_conclusion_paragraphs_and_markdown_table_notice(self):
         reply = ("**视频人物分割推荐 SAM 3，优势是主体选择和连续跟踪。**\n\n"
@@ -189,7 +216,7 @@ class NotificationTests(unittest.TestCase):
         request = opener.call_args.args[0]
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual(body["chat_id"], CHAT)
-        self.assertIn("<b>任务</b>\n测试任务", body["text"])
+        self.assertIn("<b>Task</b>\n测试任务", body["text"])
         self.assertEqual(body["parse_mode"], "HTML")
         self.assertEqual(opener.call_args.kwargs["timeout"], 15)
 

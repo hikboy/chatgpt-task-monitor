@@ -25,7 +25,7 @@ import tomllib
 import urllib.error
 import urllib.request
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 IS_WINDOWS = sys.platform == "win32"
 INSTALL_SUBDIR = Path("notifications") / "codex-telegram"
 SOURCE = Path(__file__).resolve()
@@ -162,13 +162,37 @@ def result_preview(value: object) -> tuple[str, list[str]]:
         index += 1
     cleaned = plain_markdown("\n".join(prose))
     paragraphs = re.split(r"\n\s*\n", cleaned) if cleaned else []
-    summary = readable_excerpt("\n\n".join(paragraphs[:2]), 300) if paragraphs else "回复内容见会话。"
+    prose_blocks = []
+    points = []
+    for paragraph in paragraphs:
+        block = []
+        in_point = False
+        for line in paragraph.splitlines():
+            point = re.match(r"^(?:•|\d+[.)])[ \t]+(.+)$", line)
+            if point:
+                if block:
+                    prose_blocks.append("\n".join(block))
+                    block = []
+                points.append(point[1])
+                in_point = True
+            elif in_point:
+                points[-1] += " " + line
+            else:
+                block.append(line)
+        if block:
+            prose_blocks.append("\n".join(block))
+    point_text = "\n".join("• " + readable_excerpt(point, 60) for point in points[:3])
+    prose_text = "\n\n".join(prose_blocks[:2])
+    if prose_text and point_text:
+        summary = readable_excerpt(prose_text, 300 - len(point_text) - 2) + "\n\n" + point_text
+    else:
+        summary = readable_excerpt(prose_text or point_text, 300) or "回复内容见会话。"
     notes = []
     if has_table:
         notes.append("📋 回复包含对比表，详情见会话。")
     if has_code:
         notes.append("🧩 回复包含代码，详情见会话。")
-    if len(paragraphs) > 2 and not notes:
+    if (len(prose_blocks) > 2 or len(points) > 3) and not notes:
         notes.append("更多内容见会话。")
     return summary, notes
 
@@ -220,6 +244,12 @@ def resolve_session_name(event: dict, home: Path) -> str:
 
 
 def build_message(event: dict, home: Path) -> tuple[str, dict]:
+    # This optional field belongs to this notifier, not the native Codex schema.
+    # An ordinary completion callback does not establish business-task success.
+    completion_status = event.get("notification-status", "success")
+    if completion_status not in ("success", "failed"):
+        raise NotificationError("invalid-event")
+    heading = "❌ <b>Failed</b>" if completion_status == "failed" else "✅ <b>Success</b>"
     name = resolve_session_name(event, home)
     inputs = event.get("input-messages", [])
     if isinstance(inputs, str):
@@ -233,15 +263,16 @@ def build_message(event: dict, home: Path) -> tuple[str, dict]:
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
     escape = html.escape
     message = (
-        "✅ <b>本轮任务完成</b>\n\n"
-        f"📌 <b>会话：</b> {escape(excerpt(name, 200))}\n\n"
-        f"📝 <b>任务</b>\n{escape(task)}\n\n"
-        f"💡 <b>结果</b>\n{escape(result)}"
+        f"{heading}\n\n"
+        f"📌 <b>Session</b>\n{escape(excerpt(name, 200))}\n\n"
+        f"📝 <b>Task</b>\n{escape(task)}\n\n"
+        f"💡 <b>Result</b>\n{escape(result)}"
     )
     if notes:
         message += "\n\n" + "\n".join(f"<i>{escape(note)}</i>" for note in notes)
     message += f"\n\n💻 {escape(hostname)}\n🕒 {escape(timestamp)}"
-    return message, {"session_name": name, "task_summary": task, "result_summary": result}
+    return message, {"session_name": name, "task_summary": task, "result_summary": result,
+                     "completion_status": completion_status}
 
 
 def windows_setting(name: str) -> str:
@@ -503,11 +534,15 @@ def install(home: Path) -> dict:
             "restart_required": True}
 
 
-def test_event(session_id: str | None = None) -> str:
+def test_event(session_id: str | None = None, outcome: str = "success") -> str:
     return json.dumps({"type": "agent-turn-complete", "thread-id": session_id,
+                       "notification-status": outcome,
                        "thread-name": None if session_id else "通知测试",
                        "input-messages": ["跨平台 Telegram 通知测试"],
-                       "last-assistant-message": "这是一条测试通知：包含会话名称、任务摘要、结果摘要、电脑名和完成时间。"}, ensure_ascii=False)
+                       "last-assistant-message": "这是一条通知排版测试。\n\n"
+                                                 "- Session、Task、Result 标题加粗，内容另起一行\n"
+                                                 "- 结果要点统一使用圆点列表\n"
+                                                 "- 保留电脑名和完成时间"}, ensure_ascii=False)
 
 
 def configure(home: Path, send_test: bool) -> dict:
@@ -545,6 +580,8 @@ def main(argv: list[str] | None = None) -> int:
     callback.add_argument("--json", action="store_true", help="Print a diagnostic result")
     test = subcommands.add_parser("test", help="Send a test message; does not invoke the original callback")
     test.add_argument("--session-id")
+    test.add_argument("--outcome", choices=("success", "failed"), default="success",
+                      help="Preview a success or explicitly reported failure notification")
     test.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     home = codex_home(args.codex_home)
@@ -554,7 +591,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "configure":
             result = configure(home, args.test)
         elif args.command == "test":
-            result = notify(test_event(args.session_id), home, dry_run=args.dry_run, skip_original=True)
+            result = notify(test_event(args.session_id, args.outcome), home, dry_run=args.dry_run, skip_original=True)
         else:
             event_json = sys.stdin.buffer.read().decode("utf-8-sig") if args.stdin else args.event
             result = notify(event_json, home, dry_run=args.dry_run, skip_original=args.skip_original)

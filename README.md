@@ -7,23 +7,28 @@ macOS、Linux、Windows 共用的通知脚本。Codex 一轮任务完成时，�
 通知使用 Telegram HTML 模式发送：标题加粗，各部分用空行分隔。显示内容示例：
 
 ```text
-✅ 本轮任务完成
+✅ Success
 
-📌 会话：通知排版
+📌 Session
+通知排版
 
-📝 任务
+📝 Task
 通知中增加任务摘要和结果摘要
 
-💡 结果
+💡 Result
 已修改脚本，测试通过。
 
-📋 回复包含对比表，详情见会话。
+• 标题加粗，内容另起一行
+• 原文列表统一为圆点
+• 保留电脑名和完成时间
 
 💻 my-computer
 🕒 2026-10-16 13:00:00 +0800
 ```
 
-任务摘要最多 150 字，会话名称最多显示 200 字；结果保留开头最多两段正文、最多 300 字，保留段落和列表换行，超长时优先在完整句子处截断。摘要为已有文本的摘录，不额外调用模型。通知包含任务和回复的这部分内容。
+任务摘要最多 150 字，会话名称最多显示 200 字；结果提取开头最多两段正文和原文中的前三条列表要点，总计最多 300 字，保留段落和列表换行，超长时优先在完整句子处截断。要点统一为 `•`，单条最多 60 字；原文没有列表时不生成要点。摘要为已有文本的摘录，不额外调用模型。通知包含任务和回复的这部分内容。
+
+顶部使用 `✅ Success` 或 `❌ Failed`。原生 `agent-turn-complete` 回调默认显示 `Success`，仅表示正常收到本轮完成事件，不保证任务中的测试或业务操作全部成功。官方文档列出的回调字段没有任务成败信息；脚本支持调用方显式传入自定义字段 `"notification-status": "failed"` 显示失败，不能自动覆盖崩溃或卡死，也不根据回复中的“失败”等词猜测状态。返回 JSON 的 `success` 仍表示通知发送或预览是否成功，与该自定义状态分别记录。
 
 正文中的 Markdown 加粗、标题、行内代码及链接标记会清理为可读文字；对比表和围栏代码块改为“详情见会话”的提示，不直接拼进摘要。标题由脚本生成 HTML，正文统一转义 `<`、`>`、`&` 等特殊字符，避免原始文本被当成标签。只更新脚本即可生效，无需重新填写 Telegram 凭据。
 
@@ -85,6 +90,9 @@ Windows 使用 `python`；macOS / Linux 使用 `python3`。
 ```bash
 # 只预览，不联网、不调用原有回调。
 python3 ./codex_telegram.py test --dry-run
+
+# 仅预览 Failed 样式，不发送告警。
+python3 ./codex_telegram.py test --outcome failed --dry-run
 
 # 发送测试；指定会话 ID 时显示该会话的真实名称。
 python3 ./codex_telegram.py test --session-id YOUR_SESSION_ID
@@ -155,7 +163,7 @@ python3 -m unittest discover -s tests -v
 
 测试覆盖 HTML 标签及特殊字符转义、段落保留、表格与代码块过滤、摘要截断、会话改名和数据库兼容、UTF-8、Telegram 请求、原回调转发、TOML 保留与备份、重复安装、Windows 隐藏窗口和原生命令行/标准输入。所有测试使用模拟 Telegram 响应，不发送真实消息。
 
-本次实际验证：Windows / Python 3.12.3 与 Linux（WSL）/ Python 3.14.4 各 36 项测试通过；Windows 已另行完成真实 HTML 通知发送，旧 PowerShell 入口此前也已验证。Linux 尚未验证联网发送，macOS 尚未实机验证。
+本次实际验证：Windows / Python 3.12.3 与 Linux（WSL）/ Python 3.14.4 各 38 项测试通过；Windows 已另行完成真实 HTML 通知发送，旧 PowerShell 入口此前也已验证。Linux 尚未验证联网发送，macOS 尚未实机验证。
 
 附带 GitHub Actions 的 Windows / macOS / Linux 与 Python 3.11 / 3.13 测试矩阵；把本目录作为仓库根目录后可运行。附带配置不代表已在远端执行。
 
