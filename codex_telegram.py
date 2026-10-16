@@ -25,7 +25,7 @@ import tomllib
 import urllib.error
 import urllib.request
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 IS_WINDOWS = sys.platform == "win32"
 INSTALL_SUBDIR = Path("notifications") / "codex-telegram"
 SOURCE = Path(__file__).resolve()
@@ -234,9 +234,9 @@ def build_message(event: dict, home: Path) -> tuple[str, dict]:
     escape = html.escape
     message = (
         "✅ <b>本轮任务完成</b>\n\n"
-        f"<b>会话：</b> {escape(excerpt(name, 200))}\n\n"
-        f"<b>任务</b>\n{escape(task)}\n\n"
-        f"<b>结果</b>\n{escape(result)}"
+        f"📌 <b>会话：</b> {escape(excerpt(name, 200))}\n\n"
+        f"📝 <b>任务</b>\n{escape(task)}\n\n"
+        f"💡 <b>结果</b>\n{escape(result)}"
     )
     if notes:
         message += "\n\n" + "\n".join(f"<i>{escape(note)}</i>" for note in notes)
