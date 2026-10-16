@@ -407,7 +407,7 @@ class NotificationTests(unittest.TestCase):
         hidden.write_bytes(b"stub")
         with mock.patch.object(notifier, "IS_WINDOWS", True), mock.patch.object(notifier.sys, "executable", str(executable)):
             result = notifier.install(self.home)
-        self.assertEqual(result["notify"][0], str(hidden))
+        self.assertEqual(result["notify"][0], str(hidden.resolve()))
 
     def test_invalid_config_is_never_overwritten(self):
         config = self.home / "config.toml"
